@@ -26,15 +26,15 @@ def main():
     parser.add_argument('--wheel_halfwidth_deg', type=float, default=120.0, help='Half-width of the membrane sector in degrees for helical wheel.')
     
     # --- Argumentos de pesos (Lambdas) ---
-    parser.add_argument('--lambda_env', type=float, default=3, help='Weight of the environment preference term.')# poner 0.1 para el polar
-    parser.add_argument('--lambda_charge', type=float, default=2, help='Weight of the membrane charge term.')
-    parser.add_argument('--lambda_mu', type=float, default=2, help='Weight of the hydrophobic moment term.')
-    parser.add_argument('--lambda_local', type=float, default=2, help='Weight of the local preference terms.')
-    parser.add_argument('--lambda_pairwise', type=float, default=1, help='Weight of the pairwise interaction term.')
+    parser.add_argument('--lambda_env', type=float, default=-10, help='Weight of the environment preference term.')# poner 0.1 para el polar
+    parser.add_argument('--lambda_charge', type=float, default=3, help='Weight of the membrane charge term.')
+    parser.add_argument('--lambda_mu', type=float, default=0.2, help='Weight of the hydrophobic moment term.')
+    parser.add_argument('--lambda_local', type=float, default=1, help='Weight of the local preference terms.')
+    parser.add_argument('--lambda_pairwise', type=float, default=0.1, help='Weight of the pairwise interaction term.')
     parser.add_argument('--lambda_helix_pairs', type=float, default=1, help='Weight of the helix pair propensity term.') # Bajado de 50 a 5.0 (valor razonable)
-    parser.add_argument('--lambda_electrostatic', type=float, default=1, help='Weight of the general electrostatics term.') # Bajado de 50 a 5.0
+    parser.add_argument('--lambda_electrostatic', type=float, default=0.5, help='Weight of the general electrostatics term.') # Bajado de 50 a 5.0
     parser.add_argument('--max_interaction_dist', type=int, default=1, help='Maximum sequence distance for pairwise interactions.') # Cambiado default a 4 para captar interacciones de hélice
-    parser.add_argument('--membrane_charge', type=str, default='neg', choices=['neu', 'neg', 'pos'], help='Charge of the membrane.')
+    parser.add_argument('--membrane_charge', type=str, default='pos', choices=['neu', 'neg', 'pos'], help='Charge of the membrane.')
     
     parser.add_argument('--output_dir', type=str, default='output', help='Directory to save output files.')
     parser.add_argument('--use_statevector', action='store_true', default=False, help='Use statevector instead of shots.')
