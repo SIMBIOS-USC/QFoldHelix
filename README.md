@@ -2,7 +2,7 @@
 
 🧬 **Quantum Protein Design with QAOA** 🧬  
 This repository implements a **quantum approach to protein sequence design**, formulating it as a **Quadratic Unconstrained Binary Optimization (QUBO)** problem.  
-It supports both **PennyLane** and **Qiskit** backends, allowing experimentation with **variational quantum algorithms** (QAOA, VQE) for peptide and helix sequence optimization.
+It includes QAOA/VQE (Qiskit), classical search, and simulated annealing workflows for peptide and helix sequence optimization.
 
 ---
 
@@ -18,13 +18,14 @@ It supports both **PennyLane** and **Qiskit** backends, allowing experimentation
     - Membrane interaction terms  
 
 - **Backends**  
-  - [PennyLane](https://pennylane.ai) (default)  
-  - [Qiskit](https://qiskit.org) (optional, if installed)  
+  - [Qiskit](https://qiskit.org) for `qaoa` and `vqe`
+  - PennyLane is used for Hamiltonian construction utilities
 
 - **Optimization**  
   - QAOA with warm-starts and layered parameter initialization  
   - Classical brute-force solver for validation  
-  - Convergence tracking and energy analysis  
+  - Simulated annealing solver (`neal`)  
+  - Convergence tracking and energy analysis
 
 - **Visualization**  
   - Optimization convergence plots  
@@ -37,15 +38,18 @@ It supports both **PennyLane** and **Qiskit** backends, allowing experimentation
 Clone the repository and create the environment using **conda**:
 
 ```bash
-git clone https://github.com/DanielCondeTorres/Quantum_sequence_helix.git
-cd Quantum_sequence_helix
+git clone https://github.com/AngelPineiro-USC/QFoldHelix.git
+cd QFoldHelix
 conda env create -f environment.yml
 conda activate quantum_protein_design
+```
 
 ## Usage
 
-```
-python main.py -L 6 -R V,Q,N,S \
+```bash
+python Code/main_final.py -L 6 -R V,Q,N,S \
+    --backend qiskit \
+    --solver qaoa \
     --lambda_pairwise 0.5 \
     --lambda_helix_pairs 0.5 \
     --lambda_env 5.0 \
@@ -53,4 +57,14 @@ python main.py -L 6 -R V,Q,N,S \
     --membrane_mode wheel \
     --wheel_phase_deg 0 \
     --wheel_halfwidth_deg 90
+```
+
+Quick alternatives:
+
+```bash
+# Classical brute force
+python Code/main_final.py --solver classical -L 4 -R V,Q,L,R
+
+# Simulated annealing
+python Code/main_final.py --solver annealing -L 6 -R V,Q,N,S
 ```

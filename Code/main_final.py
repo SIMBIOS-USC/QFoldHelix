@@ -5,15 +5,11 @@ import traceback
 import matplotlib
 matplotlib.use('Agg')  # Forzar backend sin GUI
 
-# Importaciones de tu estructura src
-from src.quantum_engine import QuantumProteinDesign
-from src.reports import save_energy_results, print_top_sequences_table
-
 def main():
     parser = argparse.ArgumentParser(description='Quantum protein sequence design.')
     parser.add_argument('-L', '--length', type=int, default=4, help='Sequence length.')
     parser.add_argument('-R', '--residues', type=str, default="V,Q,L,R", help='Amino acids to use, comma-separated.')
-    parser.add_argument('-b', '--backend', type=str, default='pennylane', choices=['pennylane', 'qiskit'], help='Quantum backend to use.')
+    parser.add_argument('-b', '--backend', type=str, default='qiskit', choices=['pennylane', 'qiskit'], help='Quantum backend to use.')
     
     # Solver options
     parser.add_argument('--solver', type=str, default='qaoa', choices=['qaoa', 'vqe', 'classical', 'annealing'], help='Solver to use.')
@@ -75,6 +71,15 @@ def main():
     start_time = time.time()
     
     try:
+        # Importaciones diferidas para permitir `--help` sin dependencias pesadas.
+        from src.quantum_engine import QuantumProteinDesign
+        from src.reports import save_energy_results, print_top_sequences_table
+
+        if args.backend == 'pennylane' and args.solver in {'qaoa', 'vqe'}:
+            print("❌ El backend 'pennylane' no está implementado para --solver qaoa/vqe en este entrypoint.")
+            print("   Usa --backend qiskit o cambia a --solver classical/annealing.")
+            return
+
         # 1. Crear el objeto Designer
         designer = QuantumProteinDesign(
             sequence_length=args.length,
@@ -113,6 +118,7 @@ def main():
             result = designer.solve_quantum_annealing(num_reads=2000)
         else: # qaoa
             result = designer.solve_qaoa_qiskit()
+        result.setdefault('solver', args.solver)
 
         end_time = time.time()
         execution_time = end_time - start_time
@@ -122,7 +128,7 @@ def main():
         # 3. Mostrar Resultados
         if args.solver == 'classical':
             print("\n🏆 Solución Clásica:")
-            print(f"Secuencia: {result.get('sequence', 'N/A')}")
+            print(f"Secuencia: {result.get('repaired_sequence', result.get('sequence', 'N/A'))}")
             print(f"Energía: {result.get('energy', float('inf')):.6f}")
         else:
             print(f"\n⚛️ Solución Cuántica ({args.solver.upper()}):")

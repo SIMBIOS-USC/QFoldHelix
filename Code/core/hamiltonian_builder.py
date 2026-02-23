@@ -1,8 +1,11 @@
 import numpy as np
-import pennylane as qml
 import gc
 from typing import List, Tuple, Dict, Any
 from collections import defaultdict
+try:
+    import pennylane as qml
+except ImportError:
+    qml = None
 
 # Importaciones requeridas de tu estructura de archivos
 from utils.general_utils import get_qubit_index
@@ -471,7 +474,14 @@ class HamiltonianBuilder:
         pauli_list = [
             (c, p) for p, c in final_dict.items() if abs(c) > 1e-9
         ]
-        coeffs = [t[0] for t in pauli_list]
-        ops = [qml.pauli.string_to_pauli_word(t[1]) for t in pauli_list]
+        if backend == 'pennylane':
+            if qml is None:
+                raise ImportError(
+                    "El backend 'pennylane' requiere la dependencia 'pennylane'."
+                )
+            coeffs = [t[0] for t in pauli_list]
+            ops = [qml.pauli.string_to_pauli_word(t[1]) for t in pauli_list]
+            return pauli_list, qml.Hamiltonian(coeffs, ops)
 
-        return pauli_list, qml.Hamiltonian(coeffs, ops)
+        # Para backends no-PennyLane (p. ej. Qiskit), basta con pauli_list.
+        return pauli_list, None

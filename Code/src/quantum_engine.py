@@ -10,17 +10,31 @@ os.environ["OMP_NUM_THREADS"] = "4"
 os.environ["QISKIT_IN_PARALLEL"] = "FALSE"
 
 # Imports Qiskit
-from qiskit import QuantumCircuit, transpile
-from qiskit.quantum_info import SparsePauliOp
-from qiskit.circuit.library import QAOAAnsatz
-from qiskit_aer import AerSimulator
-from qiskit_algorithms.optimizers import COBYLA
+QISKIT_AVAILABLE = True
+QISKIT_IMPORT_ERROR = None
+try:
+    from qiskit import transpile
+    from qiskit.quantum_info import SparsePauliOp
+    from qiskit.circuit.library import QAOAAnsatz
+    from qiskit_aer import AerSimulator
+    from qiskit_algorithms.optimizers import COBYLA
+except ImportError as e:
+    QISKIT_AVAILABLE = False
+    QISKIT_IMPORT_ERROR = e
+    transpile = None
+    SparsePauliOp = None
+    QAOAAnsatz = None
+    AerSimulator = None
+    COBYLA = None
 
 # Import IBM (Opcional)
-try:
-    from qiskit_ibm_runtime import QiskitRuntimeService
-    IBM_AVAILABLE = True
-except ImportError:
+if QISKIT_AVAILABLE:
+    try:
+        from qiskit_ibm_runtime import QiskitRuntimeService
+        IBM_AVAILABLE = True
+    except ImportError:
+        IBM_AVAILABLE = False
+else:
     IBM_AVAILABLE = False
 
 from .utils_logic import decode_solution_logic
@@ -49,7 +63,17 @@ class QuantumProteinDesign:
 
     def _sanitize_hamiltonian(self):
         self.pauli_terms = [(float(c.real), p) for c, p in self.pauli_terms]
-        self.qiskit_hamiltonian = SparsePauliOp.from_list([(p, float(c)) for c, p in self.pauli_terms])
+        if QISKIT_AVAILABLE and SparsePauliOp is not None:
+            self.qiskit_hamiltonian = SparsePauliOp.from_list([(p, float(c)) for c, p in self.pauli_terms])
+        else:
+            self.qiskit_hamiltonian = None
+
+    def _ensure_qiskit(self, feature_name: str):
+        if not QISKIT_AVAILABLE:
+            raise ImportError(
+                f"{feature_name} requiere Qiskit y paquetes asociados. "
+                "Instala: qiskit qiskit-aer qiskit-algorithms"
+            ) from QISKIT_IMPORT_ERROR
 
     def decode_solution(self, bitstring: str) -> str:
         if not bitstring: return 'X' * self.L
@@ -84,6 +108,7 @@ class QuantumProteinDesign:
         return breakdown
 
     def _get_backend(self):
+        self._ensure_qiskit("El backend cuántico")
         sim_options = {"method": "statevector"} 
         return AerSimulator(device='CPU', **sim_options)
 
@@ -170,6 +195,9 @@ class QuantumProteinDesign:
     #  SOLVER QAOA (MODO CVaR ACTIVADO)
     # ------------------------------------------------------------------
     def solve_qaoa_qiskit(self, p_layers=1, max_iter=300, ibm_token=None):
+        self._ensure_qiskit("El solver QAOA")
+        if self.qiskit_hamiltonian is None:
+            raise RuntimeError("Hamiltoniano Qiskit no disponible tras la inicialización.")
         backend_local = self._get_backend()
         
         # --- CONFIGURACIÓN ---
@@ -208,7 +236,11 @@ class QuantumProteinDesign:
                 try:
                     job = backend_local.run(bound_qc, shots=opt_shots)
                     counts = job.result().get_counts()
-                except: return 0.0
+                except Exception:
+                    # Penalizar fuertemente fallos de evaluación para evitar falsos mínimos.
+                    penalty = 1e12
+                    current_history.append(penalty)
+                    return penalty
                 
                 # --- LÓGICA CVaR (Conditional Value at Risk) ---
                 if use_cvar:
@@ -265,6 +297,9 @@ class QuantumProteinDesign:
                 if n_restarts > 1: 
                     print(f"   ✅ Restart {i+1}: Récord -> {best_global_energy:.6f}")
 
+        if best_global_params is None:
+            raise RuntimeError("QAOA no produjo parámetros válidos durante la optimización.")
+
         # --- FASE FINAL ---
         probs_dict = {}
         
@@ -307,6 +342,7 @@ class QuantumProteinDesign:
         }
 
     def _run_local_final(self, qc, params, backend):
+        self._ensure_qiskit("La ejecución final QAOA")
         try: final_qc = qc.assign_parameters(params)
         except: final_qc = qc.bind_parameters(params)
         # SUPER SHOTS PARA L=2 PARA REDUCIR RUIDO ESTADÍSTICO
@@ -323,12 +359,18 @@ class QuantumProteinDesign:
         Resuelve usando VQE con Evolución Diferencial (Algoritmo Genético).
         No requiere dependencias externas de Qiskit Algorithms.
         """
+        self._ensure_qiskit("El solver VQE")
         print(f"\n🧬 INICIANDO VQE (Differential Evolution) | Layers={layers}")
         
         # 1. Imports locales para no romper nada arriba
         from qiskit.circuit.library import TwoLocal
         from qiskit import transpile
-        from scipy.optimize import differential_evolution
+        try:
+            from scipy.optimize import differential_evolution
+        except ImportError as e:
+            raise ImportError(
+                "VQE requiere scipy (scipy.optimize.differential_evolution)."
+            ) from e
         import sys
 
         # 2. Configuración del Backend (Simulador Local)
@@ -535,5 +577,4 @@ class QuantumProteinDesign:
             'repaired_cost': best_energy, 
             'probs': probs_dict
         }
-
 
