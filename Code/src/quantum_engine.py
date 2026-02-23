@@ -88,7 +88,7 @@ class QuantumProteinDesign:
         return AerSimulator(device='CPU', **sim_options)
 
     # ------------------------------------------------------------------
-    #  SOLVER CLÁSICO (FUERZA BRUTA REAL + VISUALIZACIÓN)
+    #  SOLVER CLÁSICO
     # ------------------------------------------------------------------
     def solve_classical_brute_force(self):
         print(f"\n⚡ INICIANDO SOLVER CLÁSICO (Búsqueda de Mínima Energía)")
@@ -96,10 +96,9 @@ class QuantumProteinDesign:
         
         visited_solutions = {} 
         
-        # --- CASO A: ESCANEO COMPLETO ---
         if self.n_qubits <= 20:
             total_states = 2**self.n_qubits
-            print(f"   �� Calculando la energía de TODAS las {total_states} secuencias...")
+            print(f"   🔍 Calculando la energía de TODAS las {total_states} secuencias...")
             for i in range(total_states):
                 bs = format(i, f'0{self.n_qubits}b')
                 en = self.compute_energy_from_bitstring(bs)
@@ -107,7 +106,6 @@ class QuantumProteinDesign:
                 if total_states > 50000 and i % (total_states//5) == 0:
                     print(f"      ... {i}/{total_states} procesados")
         else:
-            # --- CASO B: MUESTREO MASIVO ---
             print(f"   ⚠️ Espacio gigante. Usando Muestreo Inteligente.")
             n_samples = 300000 
             for _ in range(n_samples):
@@ -115,7 +113,6 @@ class QuantumProteinDesign:
                 bs = "".join(map(str, bs_arr))
                 visited_solutions[bs] = self.compute_energy_from_bitstring(bs)
             
-            # Refinamiento Hill Climbing
             best_seeds = sorted(visited_solutions.items(), key=lambda x: x[1])[:50]
             print("      ⛰️  Refinando los mejores candidatos...")
             for start_bs, start_en in best_seeds:
@@ -138,7 +135,6 @@ class QuantumProteinDesign:
                             improved = True
                             break
 
-        # --- ORDENAR Y MOSTRAR ---
         sorted_sol = sorted(visited_solutions.items(), key=lambda x: x[1])
         top_k = min(len(sorted_sol), 100)
         top_candidates = sorted_sol[:top_k]
@@ -152,7 +148,6 @@ class QuantumProteinDesign:
             print(f"{rank:<5} | {self.decode_solution(bs):<15} | {en:.6f}")
         print("-" * 60 + "\n")
 
-        # Generar probabilidades artificiales para visualización
         energies = np.array([en for _, en in top_candidates])
         bitstrings = [bs for bs, _ in top_candidates]
         std_dev = np.std(energies)
@@ -172,27 +167,28 @@ class QuantumProteinDesign:
         }
 
     # ------------------------------------------------------------------
-    #  SOLVER QAOA (MODO SNIPER / ELITE / SURVIVAL)
+    #  SOLVER QAOA (MODO CVaR ACTIVADO)
     # ------------------------------------------------------------------
     def solve_qaoa_qiskit(self, p_layers=1, max_iter=300, ibm_token=None):
         backend_local = self._get_backend()
         
-        # --- CONFIGURACIÓN INTELIGENTE ---
-        if self.n_qubits >= 36: 
-            # L=10: Modo Supervivencia (Ahorra RAM)
-            p_auto, n_restarts, opt_shots, tol = 1, 1, 300, 0.1
-        elif self.n_qubits >= 20: 
-            # L=8: Modo Élite (Equilibrado)
-            p_auto, n_restarts, opt_shots, tol = 2, 5, 1000, 0.01
+        # --- CONFIGURACIÓN ---
+        if self.n_qubits >= 36: # L=10
+            p_auto, n_restarts, opt_shots, tol = 1, 1, 300, 1e-9
+            use_cvar = False
+        elif self.n_qubits >= 20: # L=8
+            p_auto, n_restarts, opt_shots, tol = 2, 5, 1000, 1e-9
+            use_cvar = False
         else: 
-            # L=2: Modo FRANCOTIRADOR (Precisión Absoluta)
-            # p=5 y Tolerancia 1e-9 aseguran encontrar el pico exacto
+            # L=2: MODO SNIPER + CVaR
             p_auto, n_restarts, opt_shots, tol = 5, 20, 5000, 1e-9
-            max_iter = 5000 # Permitir muchas iteraciones
+            max_iter = 5000 
+            use_cvar = True # <--- ACTIVAMOS CVaR
         
         p_final = p_layers if p_layers > 1 else p_auto
 
         print(f"\n🏋️  QAOA LOCAL (CPU) | p={p_final} | Max Iters={max_iter} | {n_restarts} Reinicios")
+        if use_cvar: print("   ☢️  MODO CVaR ACTIVADO (Optimizando el Top 10% de disparos)")
         
         ansatz = QAOAAnsatz(self.qiskit_hamiltonian, reps=p_final)
         ansatz.measure_all()
@@ -213,16 +209,38 @@ class QuantumProteinDesign:
                     job = backend_local.run(bound_qc, shots=opt_shots)
                     counts = job.result().get_counts()
                 except: return 0.0
-                total_en = 0; total_cts = 0
-                for b, c in counts.items():
-                    bs = b.replace(" ", "")[-self.n_qubits:]
-                    total_en += self.compute_energy_from_bitstring(bs) * c
-                    total_cts += c
-                avg = total_en / total_cts if total_cts > 0 else 0
-                current_history.append(avg)
-                return avg
+                
+                # --- LÓGICA CVaR (Conditional Value at Risk) ---
+                if use_cvar:
+                    all_energies = []
+                    for b, count in counts.items():
+                        bs = b.replace(" ", "")[-self.n_qubits:]
+                        en = self.compute_energy_from_bitstring(bs)
+                        # Expandimos según el número de cuentas
+                        all_energies.extend([en] * count)
+                    
+                    # Ordenamos de menor a mayor
+                    all_energies.sort()
+                    # Nos quedamos con el mejor 10% (alpha = 0.1)
+                    alpha = 0.1
+                    num_keep = max(1, int(len(all_energies) * alpha))
+                    cvar_value = np.mean(all_energies[:num_keep])
+                    
+                    current_history.append(cvar_value)
+                    return cvar_value
+                
+                # --- LÓGICA ESTÁNDAR (Valor Esperado) ---
+                else:
+                    total_en = 0; total_cts = 0
+                    for b, c in counts.items():
+                        bs = b.replace(" ", "")[-self.n_qubits:]
+                        total_en += self.compute_energy_from_bitstring(bs) * c
+                        total_cts += c
+                    avg = total_en / total_cts if total_cts > 0 else 0
+                    current_history.append(avg)
+                    return avg
 
-            # --- INICIALIZACIÓN DE RAMPA LINEAL (El secreto del éxito) ---
+            # INICIALIZACIÓN RAMPA LINEAL
             if i == 0 and self.n_qubits < 20:
                 print("   ⚡ Usando Inicialización Adiabática (Linear Ramp)...")
                 betas = np.linspace(1.0, 0.0, p_final) * np.pi
@@ -235,18 +253,19 @@ class QuantumProteinDesign:
             else:
                 initial_point = np.random.uniform(0, 2*np.pi, 2 * p_final)
 
-            # Optimizador con tolerancia estricta
             optimizer = COBYLA(maxiter=max_iter, tol=tol)
             res = optimizer.minimize(objective_function, initial_point)
             
+            # Nota: Con CVaR, res.fun es la media del top 10%, no el promedio total.
+            # Pero sigue sirviendo para elegir el mejor set de parámetros.
             if res.fun < best_global_energy:
                 best_global_energy = res.fun
                 best_global_params = res.x
                 best_global_history = current_history
                 if n_restarts > 1: 
-                    print(f"   ✅ Restart {i+1}: Récord -> {best_global_energy:.6f} (Iters: {res.nfev})")
+                    print(f"   ✅ Restart {i+1}: Récord -> {best_global_energy:.6f}")
 
-        # --- FASE FINAL (IBM O LOCAL) ---
+        # --- FASE FINAL ---
         probs_dict = {}
         
         if ibm_token and IBM_AVAILABLE:
@@ -290,7 +309,8 @@ class QuantumProteinDesign:
     def _run_local_final(self, qc, params, backend):
         try: final_qc = qc.assign_parameters(params)
         except: final_qc = qc.bind_parameters(params)
-        shots = 100000 if self.n_qubits < 20 else 5000
+        # SUPER SHOTS PARA L=2 PARA REDUCIR RUIDO ESTADÍSTICO
+        shots = 200000 if self.n_qubits < 20 else 5000
         job = backend.run(final_qc, shots=shots)
         counts = job.result().get_counts()
         probs = {}
@@ -298,9 +318,122 @@ class QuantumProteinDesign:
             bs = b.replace(" ", "")[-self.n_qubits:]
             probs[bs] = c / shots
         return probs
-
     def solve_vqe_qiskit(self, layers=1, max_iter=100):
-        return self.solve_classical_brute_force()
+        """
+        Resuelve usando VQE con Evolución Diferencial (Algoritmo Genético).
+        No requiere dependencias externas de Qiskit Algorithms.
+        """
+        print(f"\n🧬 INICIANDO VQE (Differential Evolution) | Layers={layers}")
+        
+        # 1. Imports locales para no romper nada arriba
+        from qiskit.circuit.library import TwoLocal
+        from qiskit import transpile
+        from scipy.optimize import differential_evolution
+        import sys
+
+        # 2. Configuración del Backend (Simulador Local)
+        # Usamos el mismo simulador que ya tienes configurado en la clase
+        backend = AerSimulator(method='statevector')
+        
+        # 3. Crear el Ansatz (Circuito Variacional)
+        # TwoLocal es el estándar: Ry para rotar, CZ para entrelazar
+        ansatz = TwoLocal(self.n_qubits, ['ry'], 'cz', reps=layers, entanglement='full')
+        ansatz.measure_all()
+        
+        # 4. Transpilar una sola vez para velocidad
+        print(f"   ⚙️  Transpilando circuito ({ansatz.num_parameters} parámetros)...")
+        transpiled_qc = transpile(ansatz, backend)
+        
+        # Historial para la gráfica
+        history = []
+
+        # 5. Definir la Función de Coste (Objective Function)
+        # Esta función es la que el algoritmo genético va a llamar miles de veces
+        def objective_function(params):
+            # Asignar los parámetros genéticos al circuito
+            try:
+                bound_qc = transpiled_qc.assign_parameters(params)
+            except:
+                bound_qc = transpiled_qc.bind_parameters(params)
+            
+            # Ejecutar simulación
+            # Usamos menos shots durante la optimización para ir rápido
+            job = backend.run(bound_qc, shots=1000) 
+            counts = job.result().get_counts()
+            
+            # Calcular energía promedio (Expectation Value)
+            total_energy = 0
+            total_counts = 0
+            
+            for bitstring, count in counts.items():
+                # Asegurar formato correcto del bitstring
+                bs = bitstring.replace(" ", "")[-self.n_qubits:]
+                energy = self.compute_energy_from_bitstring(bs)
+                total_energy += energy * count
+                total_counts += count
+                
+            avg_energy = total_energy / total_counts
+            
+            # Guardar para historial (imprimir cada 500 evaluaciones para no saturar)
+            history.append(avg_energy)
+            if len(history) % 500 == 0:
+                print(f"      Genética en progreso... Eval #{len(history)}: E = {avg_energy:.4f}")
+                
+            return avg_energy
+
+        # 6. Configurar y Ejecutar Evolución Diferencial
+        # Bounds: Cada ángulo puede ir de 0 a 2pi
+        bounds = [(0, 2*np.pi) for _ in range(ansatz.num_parameters)]
+        
+        print(f"   🚀 Lanzando población de mutantes (paciencia, esto tarda)...")
+        # workers=-1 usa todos los núcleos de tu CPU
+        result = differential_evolution(
+            objective_function, 
+            bounds, 
+            maxiter=max_iter, 
+            popsize=10, # Tamaño de población (bájalo si va muy lento)
+            tol=0.01,
+            mutation=(0.5, 1),
+            recombination=0.7,
+            seed=42,
+            disp=True # Muestra progreso en consola
+        )
+
+        print(f"   🏆 VQE Terminado. Mejor Energía: {result.fun:.6f}")
+
+        # 7. Recuperar la mejor solución encontrada
+        best_params = result.x
+        
+        # Tirada final con muchos shots para tener una buena distribución de probabilidad
+        try:
+            final_qc = transpiled_qc.assign_parameters(best_params)
+        except:
+            final_qc = transpiled_qc.bind_parameters(best_params)
+            
+        final_job = backend.run(final_qc, shots=10000)
+        final_counts = final_job.result().get_counts()
+        
+        probs_dict = {}
+        for b, c in final_counts.items():
+            bs = b.replace(" ", "")[-self.n_qubits:]
+            probs_dict[bs] = c / 10000
+
+        # Seleccionar el ganador
+        best_bs, min_en = self._smart_select(probs_dict)
+
+        # Intentar graficar convergencia
+        try:
+            self.plotter.plot_optimization(history, solver_name="VQE_DiffEvol")
+        except: pass
+
+        return {
+            'bitstring': best_bs, 
+            'energy': min_en, 
+            'costs': history, 
+            'repaired_sequence': self.decode_solution(best_bs), 
+            'repaired_cost': min_en, 
+            'probs': probs_dict
+        }
 
     def _smart_select(self, probs_dict):
         best_bs, min_en = None, float('inf')
@@ -309,3 +442,98 @@ class QuantumProteinDesign:
             if en < min_en: min_en, best_bs = en, bs
         if best_bs is None: return '0'*self.n_qubits, 0.0
         return best_bs, min_en
+
+
+    def solve_quantum_annealing(self, num_reads=1000):
+        """
+        Resuelve el problema usando Simulated Annealing (dwave-neal).
+        Simula el comportamiento de un Quantum Annealer (D-Wave) en tu CPU.
+        Excelente para problemas grandes donde QAOA/VQE son lentos.
+        """
+        print(f"\n🏔️  SOLVING WITH SIMULATED ANNEALING (NEAL)...")
+        
+        try:
+            import dimod
+            from neal import SimulatedAnnealingSampler
+        except ImportError:
+            print("❌ Error: Necesitas instalar 'dwave-ocean-sdk' o 'dwave-neal'.")
+            print("   Ejecuta: pip install dwave-neal dimod")
+            return {}
+
+        # 1. Convertir tu Hamiltoniano (Pauli Z) a un Modelo Ising (h, J)
+        h = {} # Términos lineales (Z en un solo qubit)
+        J = {} # Términos cuadráticos (Z en dos qubits)
+        offset = 0.0
+
+        print("   ⚙️  Convirtiendo Hamiltoniano a formato Ising/QUBO...")
+        
+        # Recorremos tus términos de Pauli ya construidos
+        for coeff, pauli_str in self.pauli_terms:
+            # Contar cuántas Z hay en la cadena y dónde están
+            z_indices = [i for i, char in enumerate(pauli_str) if char == 'Z']
+            
+            if len(z_indices) == 0:
+                # Es el término identidad (Offset global)
+                offset += coeff
+            elif len(z_indices) == 1:
+                # Término lineal (h) -> Bias local
+                i = z_indices[0]
+                h[i] = h.get(i, 0.0) + coeff
+            elif len(z_indices) == 2:
+                # Término cuadrático (J) -> Acoplamiento
+                i, j = z_indices[0], z_indices[1]
+                if i > j: i, j = j, i # Ordenar para consistencia
+                J[(i, j)] = J.get((i, j), 0.0) + coeff
+            else:
+                pass # Términos de orden superior (>2-local) no soportados nativamente por Ising estándar
+
+        # Crear el Binary Quadratic Model (BQM)
+        bqm = dimod.BinaryQuadraticModel(h, J, offset, dimod.SPIN) # SPIN = Ising (-1, +1)
+        
+        # 2. Configurar el Sampler (Simulador Local)
+        print("   💻 Iniciando Neal SimulatedAnnealingSampler...")
+        sampler = SimulatedAnnealingSampler()
+
+        # 3. Ejecutar el Annealing
+        print(f"   🚀 Ejecutando {num_reads} lecturas (reads)...")
+        sampleset = sampler.sample(bqm, num_reads=num_reads)
+
+        # 4. Procesar Resultados
+        best_sample = sampleset.first.sample
+        best_energy = sampleset.first.energy
+        
+        # Convertir diccionario de espines Ising (-1, +1) a bitstring (1, 0)
+        # Ising +1 (Up)   -> Bit 0
+        # Ising -1 (Down) -> Bit 1
+        bitstring_list = ['0'] * self.n_qubits
+        for qubit_idx, spin_val in best_sample.items():
+            if qubit_idx < self.n_qubits:
+                bitstring_list[qubit_idx] = '0' if spin_val == 1 else '1'
+        
+        best_bs = "".join(bitstring_list)
+        
+        # Construir distribución de probabilidades para el reporte
+        probs_dict = {}
+        total_counts = sum(sampleset.record.num_occurrences)
+        for data in sampleset.data(['sample', 'num_occurrences']):
+            bs_list = ['0'] * self.n_qubits
+            for q_idx, s_val in data.sample.items():
+                 if q_idx < self.n_qubits:
+                    bs_list[q_idx] = '0' if s_val == 1 else '1'
+            bs_str = "".join(bs_list)
+            probs_dict[bs_str] = data.num_occurrences / total_counts
+
+        decoded_seq = self.decode_solution(best_bs)
+        
+        print(f"   🏆 Mejor solución encontrada: {decoded_seq} (E = {best_energy:.6f})")
+
+        return {
+            'bitstring': best_bs, 
+            'energy': best_energy, 
+            'costs': [], # Simulated annealing no devuelve historial de costes paso a paso fácil
+            'repaired_sequence': decoded_seq, 
+            'repaired_cost': best_energy, 
+            'probs': probs_dict
+        }
+
+
