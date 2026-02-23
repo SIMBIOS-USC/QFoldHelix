@@ -6,7 +6,7 @@ import matplotlib
 matplotlib.use('Agg')  # Forzar backend sin GUI
 
 # Importaciones de tu estructura src
-from QUANTUM.PINTA_BIEN_MATRIX_TENSOR.Code.src.quantum_engine_funciona_muy_bien_antarior_al_actual import QuantumProteinDesign
+from src.quantum_engine import QuantumProteinDesign
 from src.reports import save_energy_results, print_top_sequences_table
 
 def main():
@@ -14,7 +14,10 @@ def main():
     parser.add_argument('-L', '--length', type=int, default=4, help='Sequence length.')
     parser.add_argument('-R', '--residues', type=str, default="V,Q,L,R", help='Amino acids to use, comma-separated.')
     parser.add_argument('-b', '--backend', type=str, default='pennylane', choices=['pennylane', 'qiskit'], help='Quantum backend to use.')
-    parser.add_argument('--solver', type=str, default='qaoa', choices=['qaoa', 'vqe', 'classical'], help='Solver to use.')
+    
+    # Solver options
+    parser.add_argument('--solver', type=str, default='qaoa', choices=['qaoa', 'vqe', 'classical', 'annealing'], help='Solver to use.')
+    
     parser.add_argument('--shots', type=int, default=10000000, help='Number of shots for quantum simulation.')
     parser.add_argument('--membrane', type=str, help='Membrane span (e.g., 1:4)')
     parser.add_argument('--membrane_positions', type=str, help='Membrane positions (e.g., 0,2,5)')
@@ -22,16 +25,15 @@ def main():
     parser.add_argument('--wheel_phase_deg', type=float, default=-50.0, help='Phase angle for helical wheel in degrees.')
     parser.add_argument('--wheel_halfwidth_deg', type=float, default=120.0, help='Half-width of the membrane sector in degrees for helical wheel.')
     
-    # Argumentos de pesos (Lambdas)
-    parser.add_argument('--lambda_env', type=float, default=1., help='Weight of the environment preference term.')
-    parser.add_argument('--lambda_charge', type=float, default=1.0, help='Weight of the membrane charge term.')
-    parser.add_argument('--lambda_mu', type=float, default=0.5, help='Weight of the hydrophobic moment term.')
-    parser.add_argument('--lambda_local', type=float, default=1.0, help='Weight of the local preference terms.')
-    parser.add_argument('--lambda_pairwise', type=float, default=0.05, help='Weight of the pairwise interaction term.')
-    parser.add_argument('--lambda_helix_pairs', type=float, default=0.05, help='Weight of the helix pair propensity term.')
-    parser.add_argument('--lambda_segregation', type=float, default=0.5, help='Weight of the amphipathic segregation term.')
-    parser.add_argument('--lambda_electrostatic', type=float, default=0.5, help='Weight of the electrostatics term.')
-    parser.add_argument('--max_interaction_dist', type=int, default=4, help='Maximum sequence distance for pairwise interactions.')
+    # --- Argumentos de pesos (Lambdas) ---
+    parser.add_argument('--lambda_env', type=float, default=3, help='Weight of the environment preference term.')# poner 0.1 para el polar
+    parser.add_argument('--lambda_charge', type=float, default=2, help='Weight of the membrane charge term.')
+    parser.add_argument('--lambda_mu', type=float, default=2, help='Weight of the hydrophobic moment term.')
+    parser.add_argument('--lambda_local', type=float, default=2, help='Weight of the local preference terms.')
+    parser.add_argument('--lambda_pairwise', type=float, default=1, help='Weight of the pairwise interaction term.')
+    parser.add_argument('--lambda_helix_pairs', type=float, default=1, help='Weight of the helix pair propensity term.') # Bajado de 50 a 5.0 (valor razonable)
+    parser.add_argument('--lambda_electrostatic', type=float, default=1, help='Weight of the general electrostatics term.') # Bajado de 50 a 5.0
+    parser.add_argument('--max_interaction_dist', type=int, default=1, help='Maximum sequence distance for pairwise interactions.') # Cambiado default a 4 para captar interacciones de hélice
     parser.add_argument('--membrane_charge', type=str, default='neg', choices=['neu', 'neg', 'pos'], help='Charge of the membrane.')
     
     parser.add_argument('--output_dir', type=str, default='output', help='Directory to save output files.')
@@ -67,7 +69,6 @@ def main():
             print("Invalid --membrane_positions. Use comma-separated indices, e.g. 0,2,5")
             return
 
-    # Inicializamos result vacío por seguridad
     result = {}
 
     print(f"🚀 Iniciando diseño (L={args.length}, Solver={args.solver})...")
@@ -88,8 +89,11 @@ def main():
             lambda_local=args.lambda_local,
             lambda_pairwise=args.lambda_pairwise,
             lambda_helix_pairs=args.lambda_helix_pairs,
-            lambda_segregation=args.lambda_segregation,
             lambda_electrostatic=args.lambda_electrostatic,
+            
+            # --- PASAMOS EL NUEVO ARGUMENTO ---
+            # ----------------------------------
+            
             max_interaction_dist=args.max_interaction_dist,
             membrane_positions=mem_positions,
             membrane_mode=args.membrane_mode,
@@ -105,6 +109,8 @@ def main():
             result = designer.solve_classical_brute_force()
         elif args.solver == 'vqe':
             result = designer.solve_vqe_qiskit()
+        elif args.solver == 'annealing':
+            result = designer.solve_quantum_annealing(num_reads=2000)
         else: # qaoa
             result = designer.solve_qaoa_qiskit()
 
@@ -138,12 +144,11 @@ def main():
             designer.plotter.plot_optimization(result['costs'], solver_name=args.solver.upper())
 
         if seq_log != 'N/A' and 'X' not in seq_log:
-             # AQUÍ ESTABA EL FALLO: Ahora pasamos membrane_mode explícitamente
              designer.plotter.plot_alpha_helix_wheel(
                 sequence=seq_log,
                 wheel_phase_deg=args.wheel_phase_deg,
                 wheel_halfwidth_deg=args.wheel_halfwidth_deg,
-                membrane_mode=args.membrane_mode  # <-- ¡ESTO FALTABA!
+                membrane_mode=args.membrane_mode
             )
 
     except Exception:
