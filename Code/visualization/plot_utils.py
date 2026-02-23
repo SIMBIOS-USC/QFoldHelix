@@ -66,106 +66,179 @@ class ProteinPlotter:
         self.plot_optimization(costs, solver_name=title)
 
     # --- FUNCIÓN DE HELICAL WHEEL (Restaurada con tus parámetros exactos) ---
-    def plot_alpha_helix_wheel(self, sequence: str, membrane_mode: str = 'span', 
-                                wheel_phase_deg: float = -50.0,  # Adjusted to -50.0
-                                wheel_halfwidth_deg: float = 120.0):  # Adjusted to 120.0
-            """Plot alpha helix wheel visualization"""
-            if not sequence or sequence.count('X') == len(sequence):
-                print(f"Warning: Invalid sequence for helix wheel: {sequence}")
-                return
-            
-            print(f"Plotting alpha helix wheel for sequence: {sequence}")
-            
-            # Color mapping for amino acids
-            polar = set(['S', 'T', 'N', 'Q', 'Y', 'C', 'G'])
-            nonpolar = set(['A', 'V', 'L', 'I', 'M', 'F', 'W', 'P'])
-            negative = set(['D', 'E'])
-            positive = set(['K', 'R', 'H'])
-            
-            color_map = {}
-            for aa in sequence:
-                if aa in negative:
-                    color_map[aa] = 'red'
-                elif aa in positive:
-                    color_map[aa] = 'blue'
-                elif aa in nonpolar:
-                    color_map[aa] = '#8B4513'
-                elif aa in polar:
-                    color_map[aa] = 'green'
-                else:
-                    color_map[aa] = 'gray'
-            
-            # Calculate rotated positions
-            angle_increment = np.deg2rad(100.0)
-            radius = 1.0
-            phase_rad = np.deg2rad(wheel_phase_deg)
-            angles = [(i * angle_increment + phase_rad) for i in range(len(sequence))]
-            xs = [radius * np.cos(a) for a in angles]
-            ys = [radius * np.sin(a) for a in angles]
-            
-            plt.figure(figsize=(7, 7))
-            
-            # Plot amino acids
-            for i, aa in enumerate(sequence):
-                plt.scatter(xs[i], ys[i], s=600, color=color_map[aa], 
-                        edgecolors='k', zorder=3)
-                plt.text(xs[i], ys[i], aa, ha='center', va='center', 
-                        fontsize=14, weight='bold', color='white', zorder=4)
-                
-                # Position labels
-                r_idx = radius + 0.2
-                ang_i = angles[i]
-                xi = r_idx * np.cos(ang_i)
-                yi = r_idx * np.sin(ang_i)
-                plt.text(xi, yi, f"{i+1}", ha='center', va='center', 
-                        fontsize=14, color='black', zorder=5)
-            
-            # Connect residues
-            for i in range(len(sequence) - 1):
-                plt.plot([xs[i], xs[i+1]], [ys[i], ys[i+1]], 
-                        color='k', alpha=0.35, linewidth=1.5, zorder=2)
-            
-            # Circle
-            circle = plt.Circle((0, 0), radius, color='k', fill=False, alpha=1)
-            ax = plt.gca()
-            ax.add_artist(circle)
-            
-            # Membrane visualization for wheel mode
-            if membrane_mode == 'wheel':
-                halfw = np.deg2rad(wheel_halfwidth_deg)
-                wedge = mpatches.Wedge(
-                    center=(0, 0), 
-                    r=radius, 
-                    theta1=np.rad2deg(-halfw),
-                    theta2=np.rad2deg(halfw), 
-                    facecolor='#FFE4B5', 
-                    alpha=0.3
-                )
-                ax.add_patch(wedge)
-                
-                mid_ang = 0
-                xm = 1.25 * radius * np.cos(mid_ang)
-                ym = 1.15 * radius * np.sin(mid_ang)
-                ax.text(xm * 1.1, ym, 'Lipids', ha='center', va='center', 
-                    fontsize=14, color='#8B4513', weight='bold')
-                
-                xa = 1.35 * radius * np.cos(mid_ang + np.pi)
-                ya = 1.15 * radius * np.sin(mid_ang + np.pi)
-                ax.text(xa, ya, 'Water', ha='center', va='center', 
-                    fontsize=14, color='teal', weight='bold')
-            
-            ax.set_aspect('equal')
-            ax.set_xlim(-1.5, 1.5)
-            ax.set_ylim(-1.5, 1.5)
-            ax.axis('off')
-            plt.title('Alpha-Helix Wheel')
-            
-            output_path = os.path.join(self.output_dir, 'alpha_helix_wheel.png')
-            plt.savefig(output_path, dpi=300)
-            plt.close()
-            print(f"Alpha helix wheel plot saved as {output_path}")
-    
+    def plot_alpha_helix_wheel(self, sequence: str, membrane_mode: str = 'wheel', 
+                                    wheel_phase_deg: float = 0.0, 
+                                    wheel_halfwidth_deg: float = 90.0, 
+                                    auto_align: bool = False):
+                """
+                Plot alpha helix wheel visualization.
+                - FIXED LOGIC: Background split is purely geometric based on wheel_halfwidth_deg.
+                - Lipids (Brown) are centered at 0 degrees (Right side).
+                - Water (Blue) is the rest.
+                """
+                import matplotlib.patches as mpatches
+                import matplotlib.pyplot as plt
+                import numpy as np
+                import os
+                import math
 
+                if not sequence or sequence.count('X') == len(sequence):
+                    print(f"Warning: Invalid sequence for helix wheel: {sequence}")
+                    return
+                
+                print(f"Plotting alpha helix wheel for sequence: {sequence}")
+                
+                # --- 1. CLASIFICACIÓN Y COLORES (ESTILO ORIGINAL) ---
+                nonpolar = set(['A', 'V', 'L', 'I', 'M', 'F', 'W', 'P', 'C'])
+                polar = set(['S', 'T', 'N', 'Q', 'Y', 'G'])
+                negative = set(['D', 'E'])
+                positive = set(['K', 'R', 'H'])
+                
+                color_map = {}
+                for aa in sequence:
+                    if aa in negative: color_map[aa] = 'red'
+                    elif aa in positive: color_map[aa] = 'blue'
+                    elif aa in nonpolar: color_map[aa] = '#8B4513' # Marrón original
+                    elif aa in polar: color_map[aa] = 'green'
+                    else: color_map[aa] = 'gray'
+
+                # --- 2. CÁLCULO DE ROTACIÓN ---
+                angle_increment = np.deg2rad(100.0)
+                # Fase 0 significa empezar a la derecha. Ajustamos según wheel_phase_deg.
+                rotation_offset = np.deg2rad(wheel_phase_deg)
+
+                # --- 3. GENERAR COORDENADAS ---
+                base_radius = 1.0
+                layer_offset = 0.35
+                overlap_threshold = 18
+                
+                xs = []
+                ys = []
+                radii = [] 
+                
+                for i in range(len(sequence)):
+                    theta = i * angle_increment + rotation_offset
+                    layer = i // overlap_threshold
+                    r = base_radius + (layer * layer_offset)
+                    radii.append(r)
+                    xs.append(r * np.cos(theta))
+                    ys.append(r * np.sin(theta))
+                
+                max_r = max(radii) if radii else base_radius
+                plot_limit = max_r + 1.5
+
+                # --- 4. CÁLCULO DE LA LÍNEA VERTICAL (GEOMETRÍA FIJA) ---
+                # Si halfwidth es 90, la membrana va de -90 a +90 (todo el lado derecho).
+                # La línea divisoria es x = 0.
+                # Si halfwidth es 60, la membrana es más estrecha.
+                # La línea es x = cos(90 - (90-60)) ... simplificado:
+                # Para halfwidth < 90, la línea está en X positivo.
+                # Para halfwidth > 90, la línea está en X negativo.
+                
+                # Calculamos la coordenada X de la frontera
+                # Asumimos simetría vertical. La frontera es una línea vertical aproximada
+                # para mantener el estilo rectangular que te gusta.
+                
+                if wheel_halfwidth_deg >= 180:
+                    interface_x = -plot_limit - 1.0 # Todo lípidos
+                elif wheel_halfwidth_deg <= 0:
+                    interface_x = plot_limit + 1.0  # Todo agua
+                else:
+                    # Proyección en el eje X del ángulo de corte
+                    # Si ancho=90, ángulo corte=90, cos(90)=0 -> x=0
+                    # Si ancho=60, ángulo corte=60, cos(60)=0.5 -> x>0
+                    # Pero queremos el borde izquierdo de la zona marrón.
+                    # La zona marrón está centrada en 0 grados.
+                    # Su borde está en +halfwidth y -halfwidth.
+                    # Si aproximamos con una línea recta vertical (como tu dibujo original):
+                    # La línea debe estar en x = cos(180 - halfwidth)? No.
+                    # Simplemente: X = 0 es mitad y mitad.
+                    # X positivo = menos lípidos. X negativo = más lípidos.
+                    # Fórmula aproximada para visualización rectangular:
+                    # Si halfwidth=90 -> x=0. Si halfwidth=180 -> x=-limit. Si halfwidth=0 -> x=limit.
+                    
+                    # Interpolación lineal simple para visualización
+                    ratio = (90.0 - wheel_halfwidth_deg) / 90.0 
+                    interface_x = ratio * plot_limit
+
+                plt.figure(figsize=(9, 9))
+                ax = plt.gca()
+                
+                # --- 5. DIBUJAR FONDO (ESTILO ORIGINAL) ---
+                
+                # A. AGUA (Izquierda / Fondo Total)
+                rect_water = mpatches.Rectangle(
+                    xy=(-plot_limit, -plot_limit),
+                    width=2 * plot_limit, 
+                    height=2 * plot_limit,
+                    facecolor='#CCEEFF', # Azul clarito original
+                    alpha=0.6, zorder=0
+                )
+                ax.add_patch(rect_water)
+
+                # B. LÍPIDOS (Derecha, recortado por interface_x)
+                if interface_x < plot_limit:
+                    width_lipid = plot_limit - interface_x
+                    rect_lipids = mpatches.Rectangle(
+                        xy=(interface_x, -plot_limit),
+                        width=width_lipid, 
+                        height=2 * plot_limit,
+                        facecolor='#FFE4C4', # 'Bisque' (Marrón muy claro original)
+                        alpha=0.6, zorder=0
+                    )
+                    ax.add_patch(rect_lipids)
+                    
+                    # Línea divisoria
+                    ax.axvline(x=interface_x, color='gray', linestyle='--', linewidth=1.5, alpha=0.7, zorder=1)
+
+                # Etiquetas (Centradas en sus zonas aproximadas)
+                center_water = (-plot_limit + interface_x) / 2
+                center_lipid = (interface_x + plot_limit) / 2
+                
+                if center_water > -plot_limit:
+                    ax.text(center_water, -plot_limit * 0.9, 'Water Phase', 
+                            ha='center', va='bottom', fontsize=16, color='#00008B', weight='bold')
+                
+                if center_lipid < plot_limit:
+                    ax.text(center_lipid, -plot_limit * 0.9, 'Lipid Phase', 
+                            ha='center', va='bottom', fontsize=16, color='#8B4513', weight='bold')
+
+                # --- 6. DIBUJAR ESTRUCTURA (ESTILO ORIGINAL) ---
+                for i in range(len(sequence) - 1):
+                    plt.plot([xs[i], xs[i+1]], [ys[i], ys[i+1]], 
+                            color='gray', alpha=0.5, linewidth=1.5, zorder=2) # Gris original
+
+                for i, aa in enumerate(sequence):
+                    # Círculos grandes y bordes negros
+                    plt.scatter(xs[i], ys[i], s=800, color=color_map[aa], 
+                            edgecolors='black', linewidth=1.5, zorder=3)
+                    # Letra AA
+                    plt.text(xs[i], ys[i], aa, ha='center', va='center', 
+                            fontsize=14, weight='bold', color='white', zorder=4)
+                    
+                    # Número de residuo fuera
+                    label_pos_r = radii[i] + 0.3
+                    ang_i = i * angle_increment + rotation_offset
+                    xi = label_pos_r * np.cos(ang_i)
+                    yi = label_pos_r * np.sin(ang_i)
+                    plt.text(xi, yi, f"{i+1}", ha='center', va='center', 
+                            fontsize=11, color='black', weight='bold', zorder=5)
+
+                # Círculo guía punteado
+                circle = plt.Circle((0, 0), base_radius, color='gray', fill=False, 
+                                    linestyle='--', alpha=0.3, zorder=1)
+                ax.add_artist(circle)
+                
+                ax.set_aspect('equal')
+                ax.set_xlim(-plot_limit, plot_limit)
+                ax.set_ylim(-plot_limit, plot_limit)
+                ax.axis('off')
+                plt.title(f'Alpha-Helix Wheel (Length: {len(sequence)})', pad=20, fontsize=16)
+                
+                output_path = os.path.join(self.output_dir, 'alpha_helix_wheel.png')
+                plt.savefig(output_path, dpi=300, bbox_inches='tight')
+                plt.close()
+                print(f"Alpha helix wheel plot saved as {output_path}")
     # --- OTRAS FUNCIONES (Probabilidades, Circuitos) ---
     def plot_prob_with_sequences(self, probs: np.ndarray, decoder_fn, n_qubits: int, 
                                 solver_name: str = "QAOA", top_k: int = 20):
@@ -215,3 +288,4 @@ class ProteinPlotter:
                 with open(txt_path, 'w') as f:
                     f.write(str(circuit_drawer(circuit, output='text')))
         except: pass
+
