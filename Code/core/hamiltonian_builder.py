@@ -102,14 +102,17 @@ class HamiltonianBuilder:
     # ------------------------------------------------------------------
 
     def _get_env(self, i: int) -> str:
-        """
-        Clasifica la posición i como 'membrane' o 'water' según la
-        rueda helicoidal (δ = 100°/residuo, ventana ±90°).
-        """
         phi0 = self.kwargs.get('wheel_phase_deg', 0.0)
+        # Extraer el ancho de la cara de la membrana (por defecto 90 si no viene)
+        half_width = self.kwargs.get('wheel_halfwidth_deg', 90.0)
+        
+        # Ángulo del residuo i (100° por residuo en hélice alfa)
         theta = ((i - 1) * 100.0 + phi0) % 360.0
+        
+        # Normalizar a rango [-180, 180]
         angle = theta if theta <= 180.0 else theta - 360.0
-        return "membrane" if abs(angle) <= 90.0 else "water"
+        
+        return "membrane" if abs(angle) <= half_width else "water"
 
     # ------------------------------------------------------------------
     # Z-score real  (Sec. 2 del paper: Goldstein 1992)
@@ -291,7 +294,7 @@ class HamiltonianBuilder:
                 # env_pol: AMBOS entornos (simetria anfipática).
                 #   Membrana: -h -> premia apolares (h>0), penaliza polares (h<0)
                 #   Agua:     +h -> premia polares  (h<0), penaliza apolares (h>0)
-                raw_pol = (-h if env == "membrane" else +h) * scale
+                raw_pol = (h if env == "membrane" else -h) * scale
                 # env_chg: SOLO agua. Premio unidireccional: solo carga OPUESTA a sigma.
                 #   neg: K,R,H en agua -> min((-1)(+1),0) = -1 FAV | D,E -> 0 NEUTRO
                 #   pos: D,E   en agua -> min((+1)(-1),0) = -1 FAV | K,R -> 0 NEUTRO
@@ -402,7 +405,7 @@ class HamiltonianBuilder:
         x_{i,α} = Π_k (1 ± Z_k) / 2
         """
         b = self.bits_per_pos
-        s = [(1.0 if (code >> k) & 1 == 0 else -1.0) for k in range(b)]
+        s = [(1.0 if (code >> (b-1-k)) & 1 == 0 else -1.0) for k in range(b)]
         terms = []
         for mask in range(1 << b):
             coeff = base_coeff / (2 ** b)
