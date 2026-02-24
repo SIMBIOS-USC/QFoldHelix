@@ -1,4 +1,4 @@
-name: quantum_protein_sequence_cpu
+name: protein_seq_quantum_CPU
 channels:
   - bioconda
   - conda-forge
